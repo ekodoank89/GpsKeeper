@@ -1,6 +1,8 @@
 package com.example.gpskeeper
 
 import android.Manifest
+import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,11 +21,16 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.gms.common.api.ResolvableApiException
+import com.google.android.gms.location.LocationRequest
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -37,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnStop: Button
     private lateinit var btnBackground: Button
     private lateinit var btnBattery: Button
+    private lateinit var btnTips: Button
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -48,6 +56,12 @@ class MainActivity : ComponentActivity() {
                 Toast.LENGTH_SHORT
             ).show()
             refreshUi()
+        }
+
+    private val settingsLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) {
+            // Lanjut mulai layanan apapun pilihan user
+            doStartService()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,19 +81,23 @@ class MainActivity : ComponentActivity() {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { LocationStore.running.collect { refreshUi() } }
                 launch { LocationStore.location.collect { showLocation(it) } }
+                launch { LocationStore.satellites.collect {
+                    if (LocationStore.location.value != null) showLocation(LocationStore.location.value)
+                } }
             }
         }
     }
 
     private fun showLocation(loc: Location?) {
         if (loc == null) {
-            dataText.text = "Menunggu fix GPS…\n(Pastikan lokasi HP aktif dan berada di area terbuka)"
+            dataText.text = "Memindai semua sumber lokasi…\n(Satelit + Seluler + Wi-Fi)\n\nDi dalam gedung: fix pertama butuh 1–5 menit. Tetap aktif ya!"
         } else {
             val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(loc.time))
             dataText.text = String.format(
                 Locale.US,
-                "Latitude : %.6f\nLongitude: %.6f\nAkurasi  : ±%.1f m\nKecepatan: %.1f m/s\nUpdate   : %s",
-                loc.latitude, loc.longitude, loc.accuracy, loc.speed, time
+                "Latitude : %.6f\nLongitude: %.6f\nAkurasi  : ±%.1f m\nSumber   : %s\nKecepatan: %.1f m/s\nSatelit GNSS: %s\nUpdate   : %s",
+                loc.latitude, loc.longitude, loc.accuracy, loc.provider,
+                loc.speed, LocationStore.satellites.value, time
             )
         }
     }
@@ -88,13 +106,13 @@ class MainActivity : ComponentActivity() {
         val pad = dp(20)
 
         val title = TextView(this).apply {
-            text = "📡 GPS Keeper"
-            textSize = 24f
+            text = "📡 GPS Keeper — Mode Agresif"
+            textSize = 22f
             setTypeface(typeface, Typeface.BOLD)
         }
         val subtitle = TextView(this).apply {
-            text = "Menjaga GPS tetap aktif agar lokasi selalu terbaca."
-            textSize = 14f
+            text = "Satelit GNSS + Seluler + Wi-Fi + Passive dipindai bersamaan, tiap 1 detik."
+            textSize = 13f
         }
         statusText = TextView(this).apply {
             textSize = 17f
@@ -107,10 +125,11 @@ class MainActivity : ComponentActivity() {
             setTextIsSelectable(true)
             setPadding(0, dp(4), 0, dp(12))
         }
-        dataText.text = "Menunggu fix GPS…"
+        dataText.text = "Memindai semua sumber lokasi…"
 
-        btnStart = makeButton("▶  Mulai GPS") { startGps() }
+        btnStart = makeButton("▶  Mulai GPS (Mode Agresif)") { startGps() }
         btnStop = makeButton("⏹  Berhenti") { stopGps() }
+        btnTips = makeButton("🛰️  Tips Sinyal di Tempat Sulit") { showTips() }
         btnBackground = makeButton("🔓  Aktifkan lokasi \"All the time\"") { openAppSettings() }
         btnBattery = makeButton("🔋  Pengecualian baterai") { requestIgnoreBattery() }
 
@@ -133,6 +152,7 @@ class MainActivity : ComponentActivity() {
         add(dataText, 0)
         add(btnStart, dp(16))
         add(btnStop)
+        add(btnTips)
         add(btnBackground, dp(24))
         add(btnBattery)
 
@@ -164,11 +184,42 @@ class MainActivity : ComponentActivity() {
         permissionLauncher.launch(perms.toTypedArray())
     }
 
+    private fun aggressiveRequest(): LocationRequest =
+        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1_000L)
+            .setMinUpdateIntervalMillis(500L)
+            .setWaitForAccurateLocation(false)
+            .build()
+
     private fun startGps() {
         if (!hasLocationPermission()) {
             askPermissions()
             return
         }
+        checkSettingsThenStart()
+    }
+
+    // Cek mode lokasi HP; kalau belum optimal, tawarkan dialog resmi untuk ubah ke High Accuracy
+    private fun checkSettingsThenStart() {
+        val settingsRequest = com.google.android.gms.location.LocationSettingsRequest.Builder()
+            .addLocationRequest(aggressiveRequest())
+            .setAlwaysShow(true)
+            .setNeedBle(true)
+            .build()
+        LocationServices.getSettingsClient(this)
+            .checkLocationSettings(settingsRequest)
+            .addOnSuccessListener { doStartService() }
+            .addOnFailureListener { e ->
+                if (e is ResolvableApiException) {
+                    try {
+                        settingsLauncher.launch(
+                            IntentSenderRequest.Builder(e.resolution).build()
+                        )
+                    } catch (_: Exception) { doStartService() }
+                } else doStartService()
+            }
+    }
+
+    private fun doStartService() {
         ContextCompat.startForegroundService(this, Intent(this, LocationService::class.java))
         refreshUi()
     }
@@ -176,7 +227,24 @@ class MainActivity : ComponentActivity() {
     private fun stopGps() {
         stopService(Intent(this, LocationService::class.java))
         LocationStore.location.value = null
+        LocationStore.satellites.value = "–/–"
         refreshUi()
+    }
+
+    private fun showTips() {
+        AlertDialog.Builder(this)
+            .setTitle("🛰️ Tips Sinyal di Tempat Sulit")
+            .setMessage(
+                "1. Pastikan Lokasi HP = ON mode \"Precise / High accuracy\".\n\n" +
+                "2. Aktifkan \"Google Location Accuracy\" (Setelan Google → Lokasi) + izinkan Pemindaian Wi-Fi & Bluetooth.\n\n" +
+                "3. Dalam rumah: dekat jendela; hindari atap beton tebal. Fix pertama butuh 1–5 menit.\n\n" +
+                "4. Bawah pohon / gang / gedung tinggi: langit menyempit & sinyal memantul — akurasi ±20–50 m itu normal.\n\n" +
+                "5. Pasang SIM aktif: jaringan seluler adalah sumber lokasi utama di dalam ruangan.\n\n" +
+                "6. Biarkan GPS Keeper menyala — chip yang \"hangat\" dapat fix ulang dalam hitungan detik.\n\n" +
+                "7. Xiaomi/Oppo/Vivo: izinkan Autostart + hemat baterai \"No restrictions\" untuk aplikasi ini."
+            )
+            .setPositiveButton("Mengerti", null)
+            .show()
     }
 
     private fun openAppSettings() {
@@ -208,7 +276,7 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshUi() {
         val running = LocationStore.running.value
-        statusText.text = if (running) "Status: 🟢 AKTIF (GPS dijaga)" else "Status: ⚪ BERHENTI"
+        statusText.text = if (running) "Status: 🟢 AKTIF • Mode Agresif" else "Status: ⚪ BERHENTI"
         btnStart.isEnabled = !running
         btnStop.isEnabled = running
         val needBg = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
