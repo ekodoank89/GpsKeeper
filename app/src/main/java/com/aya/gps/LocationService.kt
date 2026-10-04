@@ -29,10 +29,15 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.util.Locale
 
 class LocationService : Service() {
 
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var fusedClient: FusedLocationProviderClient? = null
     private var locationManager: LocationManager? = null
     private var fusedCallback: LocationCallback? = null
@@ -62,10 +67,13 @@ class LocationService : Service() {
         )
         LocationStore.running.value = true
         startAllProviders()
+        NetworkKeeper.start(serviceScope)   // ← keep-alive jaringan, otomatis ikut menyala
         return START_STICKY
     }
 
     override fun onDestroy() {
+        NetworkKeeper.stop()
+        serviceScope.cancel()
         fusedCallback?.let { cb -> try { fusedClient?.removeLocationUpdates(cb) } catch (_: Exception) {} }
         try { locationManager?.removeUpdates(rawListener) } catch (_: Exception) {}
         gnssCallback?.let { cb -> try { locationManager?.unregisterGnssStatusCallback(cb) } catch (_: Exception) {} }
@@ -164,13 +172,17 @@ class LocationService : Service() {
     }
 
     private fun updateNotification(loc: Location) {
+        val net = LocationStore.latencyMs.value
+        val netInfo = if (net >= 0)
+            String.format(Locale.US, " | 📶 %d ms (%s)", net, LocationStore.netMode.value)
+        else ""
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(
             NOTIFICATION_ID, buildNotification(
                 String.format(
-                    Locale.US, "%.5f, %.5f | ±%.0f m | %s | satelit %s",
+                    Locale.US, "%.5f, %.5f | ±%.0f m | %s | satelit %s%s",
                     loc.latitude, loc.longitude, loc.accuracy,
-                    loc.provider, LocationStore.satellites.value
+                    loc.provider, LocationStore.satellites.value, netInfo
                 )
             )
         )
@@ -185,6 +197,7 @@ class LocationService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("📡 AYA GPS — Mode Agresif")
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -196,7 +209,7 @@ class LocationService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID, "AYA GPS", NotificationManager.IMPORTANCE_LOW
-            ).apply { description = "Menjaga GPS tetap aktif (mode agresif)" }
+            ).apply { description = "Menjaga GPS & jaringan tetap aktif" }
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             nm.createNotificationChannel(channel)
         }
