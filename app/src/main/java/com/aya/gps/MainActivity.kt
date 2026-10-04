@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var statusText: TextView
     private lateinit var dataText: TextView
+    private lateinit var netText: TextView
     private lateinit var btnStart: Button
     private lateinit var btnStop: Button
     private lateinit var btnBackground: Button
@@ -85,7 +86,24 @@ class MainActivity : ComponentActivity() {
                 launch { LocationStore.satellites.collect {
                     if (LocationStore.location.value != null) showLocation(LocationStore.location.value)
                 } }
+                launch { LocationStore.latencyMs.collect { showNetwork() } }
             }
+        }
+    }
+
+    private fun showNetwork() {
+        val lat = LocationStore.latencyMs.value
+        if (lat < 0) {
+            netText.text = "📶 Jaringan: menunggu data…"
+        } else {
+            netText.text = String.format(
+                Locale.US,
+                "📶 Jaringan (%s): %d ms  •  jitter %.1f ms  •  loss %d%%",
+                LocationStore.netMode.value,
+                lat,
+                LocationStore.jitterMs.value,
+                LocationStore.lossPct.value
+            )
         }
     }
 
@@ -124,9 +142,16 @@ class MainActivity : ComponentActivity() {
             textSize = 15f
             setTextColor(0xFF37474F.toInt())
             setTextIsSelectable(true)
-            setPadding(0, dp(4), 0, dp(12))
+            setPadding(0, dp(4), 0, dp(8))
         }
         dataText.text = "Memindai semua sumber lokasi…"
+        netText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(0xFF00695C.toInt())
+            setTextIsSelectable(true)
+            setPadding(0, 0, 0, dp(12))
+        }
+        netText.text = "📶 Jaringan: menunggu data…"
 
         btnStart = makeButton("▶  Mulai GPS (Mode Agresif)") { startGps() }
         btnStop = makeButton("⏹  Berhenti") { stopGps() }
@@ -176,6 +201,7 @@ class MainActivity : ComponentActivity() {
         column.addView(subtitle)
         add(statusText, 0)
         add(dataText, 0)
+        add(netText, 0)
         add(btnStart, dp(16))
         add(btnStop)
         add(btnTips)
@@ -270,7 +296,8 @@ class MainActivity : ComponentActivity() {
                 "6. Biarkan AYA GPS menyala — chip yang \"hangat\" dapat fix ulang dalam hitungan detik.\n\n" +
                 "7. Xiaomi/Oppo/Vivo: izinkan Autostart + hemat baterai \"No restrictions\" untuk aplikasi ini.\n\n" +
                 "8. Aktifkan saklar \"Mulai otomatis\" di bawah agar GPS langsung dijaga setiap HP menyala.\n\n" +
-                "9. Jangan \"Force Stop\" aplikasi — auto start tidak akan jalan sampai aplikasi dibuka lagi."
+                "9. Jangan \"Force Stop\" aplikasi — auto start tidak akan jalan sampai aplikasi dibuka lagi.\n\n" +
+                "10. 📶 Network Keeper menyala otomatis bersama GPS: ping kecil tiap 4 detik menjaga koneksi data tidak idle, plus menampilkan latensi/jitter/loss. Jitter < 30 ms = stabil; loss > 20% = sinyal jelek."
             )
             .setPositiveButton("Mengerti", null)
             .show()
