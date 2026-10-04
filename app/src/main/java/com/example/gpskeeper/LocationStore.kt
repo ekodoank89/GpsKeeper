@@ -6,4 +6,5 @@ import kotlinx.coroutines.flow.MutableStateFlow
 object LocationStore {
     val location = MutableStateFlow<Location?>(null)
     val running = MutableStateFlow(false)
+    val satellites = MutableStateFlow("–/–")
 }
