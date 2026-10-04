@@ -13,4 +13,5 @@ object LocationStore {
     val jitterMs = MutableStateFlow(-1f)
     val lossPct = MutableStateFlow(-1)
     val netMode = MutableStateFlow("")     // "ping" / "http"
+    val netHost = MutableStateFlow("")     // server terpilih, mis. "1.1.1.1"
 }
