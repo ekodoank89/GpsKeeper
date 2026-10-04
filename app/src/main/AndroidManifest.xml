@@ -11,8 +11,8 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@android:drawable/sym_def_app_icon"
-        android:label="GPS Keeper"
+        android:icon="@drawable/ic_launcher"
+        android:label="AYA GPS"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <activity
