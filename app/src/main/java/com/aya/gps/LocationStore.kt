@@ -7,4 +7,10 @@ object LocationStore {
     val location = MutableStateFlow<Location?>(null)
     val running = MutableStateFlow(false)
     val satellites = MutableStateFlow("–/–")
+
+    // Statistik jaringan (Network Keeper)
+    val latencyMs = MutableStateFlow(-1)   // -1 = belum ada data
+    val jitterMs = MutableStateFlow(-1f)
+    val lossPct = MutableStateFlow(-1)
+    val netMode = MutableStateFlow("")     // "ping" / "http"
 }
