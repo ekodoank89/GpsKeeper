@@ -235,16 +235,37 @@ class LocationService : Service() {
         }
     }
 
-    // ---------- Notifikasi dengan ping berwarna ----------
+    // ---------- Notifikasi: ping + jitter + loss, semua berwarna ----------
     private fun updateNotification(loc: Location) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_ID, buildLocationNotification(loc))
     }
 
+    // Warna ping : <30 hijau | 30-100 kuning | >100 merah
     private fun statusColor(latMs: Int): Int = when {
-        latMs < 30 -> 0xFF2E7D32.toInt()   // hijau : stabil
-        latMs <= 100 -> 0xFFF9A825.toInt() // kuning: sedang
-        else -> 0xFFC62828.toInt()         // merah : jelek
+        latMs < 30 -> COLOR_GREEN
+        latMs <= 100 -> COLOR_YELLOW
+        else -> COLOR_RED
+    }
+
+    // Warna jitter : <30 hijau | 30-100 kuning | >100 merah
+    private fun jitterColor(j: Float): Int = when {
+        j < 30f -> COLOR_GREEN
+        j <= 100f -> COLOR_YELLOW
+        else -> COLOR_RED
+    }
+
+    // Warna loss : 0% hijau | 1-20% kuning | >20% merah
+    private fun lossColor(l: Int): Int = when {
+        l <= 0 -> COLOR_GREEN
+        l <= 20 -> COLOR_YELLOW
+        else -> COLOR_RED
+    }
+
+    private fun SpannableStringBuilder.appendColored(text: String, color: Int) {
+        val start = length
+        append(text)
+        setSpan(ForegroundColorSpan(color), start, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
 
     private fun buildLocationNotification(loc: Location): Notification {
@@ -258,13 +279,27 @@ class LocationService : Service() {
         val lat = LocationStore.latencyMs.value
         if (lat >= 0) {
             sb.append("  |  ")
-            val start = sb.length
-            sb.append("● ${lat} ms")
-            sb.setSpan(
-                ForegroundColorSpan(statusColor(lat)),
-                start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
+            sb.appendColored("● ${lat} ms", statusColor(lat))
             sb.append(" (${LocationStore.netMode.value})")
+
+            val jit = LocationStore.jitterMs.value
+            val loss = LocationStore.lossPct.value
+
+            sb.append("  |  ")
+            if (jit >= 0) {
+                sb.appendColored(
+                    String.format(Locale.US, "jit %.1f ms", jit), jitterColor(jit)
+                )
+            } else {
+                sb.append("jit …")   // belum cukup sampel
+            }
+
+            sb.append("  ")
+            if (loss >= 0) {
+                sb.appendColored("loss ${loss}%", lossColor(loss))
+            } else {
+                sb.append("loss …")
+            }
         }
         return buildNotification(sb)
     }
@@ -299,5 +334,9 @@ class LocationService : Service() {
     companion object {
         const val CHANNEL_ID = "aya_gps"
         const val NOTIFICATION_ID = 1
+
+        val COLOR_GREEN = 0xFF2E7D32.toInt()
+        val COLOR_YELLOW = 0xFFF9A825.toInt()
+        val COLOR_RED = 0xFFC62828.toInt()
     }
 }
