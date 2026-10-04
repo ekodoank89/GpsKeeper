@@ -11,8 +11,8 @@ android {
         applicationId = "com.aya.gps"
         minSdk = 24
         targetSdk = 34
-        versionCode = 8
-        versionName = "2.0"
+        versionCode = 9
+        versionName = "2.1"
         manifestPlaceholders["MAPS_API_KEY"] = System.getenv("MAPS_API_KEY") ?: ""
     }
 
@@ -30,7 +30,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 aktif: shrink + optimize + obfuscate
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
             if (rootProject.file("aya-release.jks").exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
