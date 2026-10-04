@@ -174,7 +174,7 @@ class LocationService : Service() {
     private fun updateNotification(loc: Location) {
         val net = LocationStore.latencyMs.value
         val netInfo = if (net >= 0)
-            String.format(Locale.US, " | 📶 %d ms (%s)", net, LocationStore.netMode.value)
+            String.format(Locale.US, " | jaringan %d ms (%s)", net, LocationStore.netMode.value)
         else ""
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(
