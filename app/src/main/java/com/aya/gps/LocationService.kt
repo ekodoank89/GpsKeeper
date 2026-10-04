@@ -19,6 +19,11 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.os.SystemClock
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -33,6 +38,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 class LocationService : Service() {
@@ -42,6 +49,8 @@ class LocationService : Service() {
     private var locationManager: LocationManager? = null
     private var fusedCallback: LocationCallback? = null
     private var gnssCallback: GnssStatus.Callback? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var lastResubscribeMs = 0L
 
     private val rawListener = object : LocationListener {
         override fun onLocationChanged(location: Location) = onNewLocation(location)
@@ -59,15 +68,17 @@ class LocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification("Mode Agresif: memindai semua sumber lokasi…")
         ServiceCompat.startForeground(
-            this, NOTIFICATION_ID, notification,
+            this, NOTIFICATION_ID,
+            buildNotification("Mode Agresif: memindai semua sumber lokasi…"),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION else 0
         )
+        acquireWakeLock()
         LocationStore.running.value = true
         startAllProviders()
-        NetworkKeeper.start(serviceScope)   // ← keep-alive jaringan, otomatis ikut menyala
+        startWatchdog()
+        NetworkKeeper.start(serviceScope)
         return START_STICKY
     }
 
@@ -77,9 +88,65 @@ class LocationService : Service() {
         fusedCallback?.let { cb -> try { fusedClient?.removeLocationUpdates(cb) } catch (_: Exception) {} }
         try { locationManager?.removeUpdates(rawListener) } catch (_: Exception) {}
         gnssCallback?.let { cb -> try { locationManager?.unregisterGnssStatusCallback(cb) } catch (_: Exception) {} }
+        try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Exception) {}
         LocationStore.running.value = false
         super.onDestroy()
     }
+
+    // ---------- WAKE LOCK: CPU tetap aktif agar fused terus mengirim walau layar mati ----------
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AYAGPS::location").apply {
+            setReferenceCounted(false)
+            acquire(24 * 60 * 60 * 1000L) // pengaman 24 jam; dilepas otomatis di onDestroy
+        }
+    }
+
+    // ---------- WATCHDOG: jika tidak ada update lokasi > 15 detik, sambung ulang otomatis ----------
+    private fun startWatchdog() {
+        serviceScope.launch {
+            while (true) {
+                delay(5_000)
+                val loc = LocationStore.location.value
+                val ageMs = loc?.let {
+                    (SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos()) / 1_000_000
+                } ?: Long.MAX_VALUE
+                if (ageMs > 15_000) {
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastResubscribeMs > 10_000) {
+                        lastResubscribeMs = now
+                        resubscribeFused()
+                        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        nm.notify(
+                            NOTIFICATION_ID,
+                            buildNotification("Sinyal terputus — menghubungkan ulang GPS…")
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resubscribeFused() {
+        val client = fusedClient ?: return
+        val cb = fusedCallback ?: return
+        try { client.removeLocationUpdates(cb) } catch (_: Exception) {}
+        try {
+            client.requestLocationUpdates(aggressiveRequest(), cb, Looper.getMainLooper())
+        } catch (_: Exception) {}
+        try {
+            client.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                ?.addOnSuccessListener { l -> l?.let { onNewLocation(it) } }
+        } catch (_: Exception) {}
+    }
+
+    private fun aggressiveRequest(): LocationRequest =
+        LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1_000L)
+            .setMinUpdateIntervalMillis(500L)
+            .setMaxUpdateDelayMillis(2_000L)
+            .setWaitForAccurateLocation(false)
+            .build()
 
     private fun startAllProviders() {
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
@@ -94,18 +161,15 @@ class LocationService : Service() {
         if (!fine && !coarse) { stopSelf(); return }
 
         // ---- SUMBER 1: Fused (GPS + Wi-Fi + seluler) tiap 1 detik ----
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1_000L)
-            .setMinUpdateIntervalMillis(500L)
-            .setMaxUpdateDelayMillis(2_000L)
-            .setWaitForAccurateLocation(false)
-            .build()
         fusedCallback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 result.lastLocation?.let { onNewLocation(it) }
             }
         }
         try {
-            fusedClient?.requestLocationUpdates(request, fusedCallback!!, Looper.getMainLooper())
+            fusedClient?.requestLocationUpdates(
+                aggressiveRequest(), fusedCallback!!, Looper.getMainLooper()
+            )
         } catch (_: SecurityException) {}
 
         // ---- Warm-up: minta fix terbaik SEGERA saat mulai ----
@@ -171,27 +235,43 @@ class LocationService : Service() {
         }
     }
 
+    // ---------- Notifikasi dengan ping berwarna ----------
     private fun updateNotification(loc: Location) {
-        val net = LocationStore.latencyMs.value
-        val netInfo = if (net >= 0)
-            String.format(Locale.US, " | jaringan %d ms (%s)", net, LocationStore.netMode.value)
-        else ""
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(
-            NOTIFICATION_ID, buildNotification(
-                String.format(
-                    Locale.US, "%.5f, %.5f | ±%.0f m | %s | satelit %s%s",
-                    loc.latitude, loc.longitude, loc.accuracy,
-                    loc.provider, LocationStore.satellites.value, netInfo
-                )
-            )
-        )
+        nm.notify(NOTIFICATION_ID, buildLocationNotification(loc))
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun statusColor(latMs: Int): Int = when {
+        latMs < 30 -> 0xFF2E7D32.toInt()   // hijau : stabil
+        latMs <= 100 -> 0xFFF9A825.toInt() // kuning: sedang
+        else -> 0xFFC62828.toInt()         // merah : jelek
+    }
+
+    private fun buildLocationNotification(loc: Location): Notification {
+        val base = String.format(
+            Locale.US, "%.5f, %.5f | ±%.0f m | %s | satelit %s",
+            loc.latitude, loc.longitude, loc.accuracy,
+            loc.provider, LocationStore.satellites.value
+        )
+        val sb = SpannableStringBuilder(base)
+
+        val lat = LocationStore.latencyMs.value
+        if (lat >= 0) {
+            sb.append("  |  ")
+            val start = sb.length
+            sb.append("● ${lat} ms")
+            sb.setSpan(
+                ForegroundColorSpan(statusColor(lat)),
+                start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            sb.append(" (${LocationStore.netMode.value})")
+        }
+        return buildNotification(sb)
+    }
+
+    private fun buildNotification(text: CharSequence): Notification {
         val pi = PendingIntent.getActivity(
-            this, 0,
-            Intent(this, MainActivity::class.java),
+            this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
@@ -199,6 +279,7 @@ class LocationService : Service() {
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setColor(0xFF0D47A1.toInt())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(pi)
