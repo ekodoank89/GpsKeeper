@@ -132,12 +132,12 @@ class LocationService : Service() {
 
     private fun registerGnssMonitor() {
         gnssCallback = object : GnssStatus.Callback() {
-            override fun onSatelliteStatus(status: GnssStatus) {
+            override fun onSatelliteStatusChanged(status: GnssStatus) {
                 var total = 0
                 var used = 0
                 for (i in 0 until status.satelliteCount) {
                     total++
-                    if (status.useInFix(i)) used++
+                    if (status.usedInFix(i)) used++
                 }
                 LocationStore.satellites.value = "$used/$total"
                 LocationStore.location.value?.let { updateNotification(it) }
