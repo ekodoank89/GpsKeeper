@@ -12,6 +12,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -94,17 +98,38 @@ class MainActivity : ComponentActivity() {
     private fun showNetwork() {
         val lat = LocationStore.latencyMs.value
         if (lat < 0) {
-            netText.text = "📶 Jaringan: menunggu data…"
-        } else {
-            netText.text = String.format(
-                Locale.US,
-                "📶 Jaringan (%s): %d ms  •  jitter %.1f ms  •  loss %d%%",
-                LocationStore.netMode.value,
-                lat,
-                LocationStore.jitterMs.value,
-                LocationStore.lossPct.value
-            )
+            netText.text = dotText("Menunggu data jaringan…", 0xFF78909C.toInt())
+            return
         }
+
+        // Indikator warna sesuai latensi
+        val color = when {
+            lat < 30 -> 0xFF2E7D32.toInt()    // hijau  : stabil
+            lat <= 100 -> 0xFFF9A825.toInt()  // kuning : sedang
+            else -> 0xFFC62828.toInt()        // merah  : jelek
+        }
+
+        val prefix = String.format(Locale.US, "Jaringan (%s): ", LocationStore.netMode.value)
+        val value = String.format(Locale.US, "%d ms", lat)
+        val suffix = String.format(
+            Locale.US, "  •  jitter %.1f ms  •  loss %d%%",
+            LocationStore.jitterMs.value, LocationStore.lossPct.value
+        )
+
+        val s = SpannableString("●  $prefix$value$suffix")
+        // Titik indikator berwarna
+        s.setSpan(ForegroundColorSpan(color), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // Angka ping berwarna + tebal
+        val vStart = 3 + prefix.length
+        s.setSpan(ForegroundColorSpan(color), vStart, vStart + value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        s.setSpan(StyleSpan(Typeface.BOLD), vStart, vStart + value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        netText.text = s
+    }
+
+    private fun dotText(text: String, dotColor: Int): SpannableString {
+        val s = SpannableString("●  $text")
+        s.setSpan(ForegroundColorSpan(dotColor), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return s
     }
 
     private fun showLocation(loc: Location?) {
@@ -147,11 +172,11 @@ class MainActivity : ComponentActivity() {
         dataText.text = "Memindai semua sumber lokasi…"
         netText = TextView(this).apply {
             textSize = 14f
-            setTextColor(0xFF00695C.toInt())
+            setTextColor(0xFF37474F.toInt())
             setTextIsSelectable(true)
             setPadding(0, 0, 0, dp(12))
         }
-        netText.text = "📶 Jaringan: menunggu data…"
+        netText.text = dotText("Menunggu data jaringan…", 0xFF78909C.toInt())
 
         btnStart = makeButton("▶  Mulai GPS (Mode Agresif)") { startGps() }
         btnStop = makeButton("⏹  Berhenti") { stopGps() }
@@ -297,7 +322,8 @@ class MainActivity : ComponentActivity() {
                 "7. Xiaomi/Oppo/Vivo: izinkan Autostart + hemat baterai \"No restrictions\" untuk aplikasi ini.\n\n" +
                 "8. Aktifkan saklar \"Mulai otomatis\" di bawah agar GPS langsung dijaga setiap HP menyala.\n\n" +
                 "9. Jangan \"Force Stop\" aplikasi — auto start tidak akan jalan sampai aplikasi dibuka lagi.\n\n" +
-                "10. 📶 Network Keeper menyala otomatis bersama GPS: ping kecil tiap 4 detik menjaga koneksi data tidak idle, plus menampilkan latensi/jitter/loss. Jitter < 30 ms = stabil; loss > 20% = sinyal jelek."
+                "10. Network Keeper menyala otomatis bersama GPS: ping kecil tiap 4 detik menjaga koneksi data tidak idle.\n\n" +
+                "Panduan warna ping: ● hijau < 30 ms (stabil), ● kuning 30–100 ms (sedang), ● merah > 100 ms (jelek). Loss > 20% = sinyal sering putus."
             )
             .setPositiveButton("Mengerti", null)
             .show()
