@@ -36,6 +36,14 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.LocationSettingsRequest
 import com.google.android.gms.location.Priority
+import com.google.android.gms.maps.CameraUpdateFactory
+import com.google.android.gms.maps.GoogleMap
+import com.google.android.gms.maps.MapView
+import com.google.android.gms.maps.MapsInitializer
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import com.google.android.gms.maps.model.LatLng
+import com.google.android.gms.maps.model.Marker
+import com.google.android.gms.maps.model.MarkerOptions
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -52,6 +60,10 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnBattery: Button
     private lateinit var btnTips: Button
     private lateinit var switchAuto: Switch
+    private lateinit var mapView: MapView
+
+    private var googleMap: GoogleMap? = null
+    private var marker: Marker? = null
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -62,6 +74,9 @@ class MainActivity : ComponentActivity() {
                 if (granted) "Izin lokasi diberikan ✅" else "Izin lokasi ditolak ❌",
                 Toast.LENGTH_SHORT
             ).show()
+            if (granted) {
+                try { googleMap?.isMyLocationEnabled = true } catch (_: SecurityException) {}
+            }
             refreshUi()
         }
 
@@ -73,13 +88,49 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
+        mapView.onCreate(null)
+        initMap()
         if (!hasLocationPermission()) askPermissions()
         observeLocation()
     }
 
-    override fun onResume() {
-        super.onResume()
-        refreshUi()
+    // Siklus hidup MapView wajib diteruskan secara manual
+    override fun onStart() { super.onStart(); mapView.onStart() }
+    override fun onResume() { super.onResume(); mapView.onResume(); refreshUi() }
+    override fun onPause() { mapView.onPause(); super.onPause() }
+    override fun onStop() { mapView.onStop(); super.onStop() }
+    override fun onDestroy() { mapView.onDestroy(); super.onDestroy() }
+    override fun onLowMemory() { super.onLowMemory(); mapView.onLowMemory() }
+
+    private fun initMap() {
+        try { MapsInitializer.initialize(applicationContext) } catch (_: Exception) {}
+        mapView.getMapAsync { map ->
+            googleMap = map
+            map.uiSettings.isZoomControlsEnabled = true
+            map.uiSettings.isCompassEnabled = true
+            if (hasLocationPermission()) {
+                try { map.isMyLocationEnabled = true } catch (_: SecurityException) {}
+            }
+        }
+    }
+
+    private fun updateMap(loc: Location) {
+        val map = googleMap ?: return
+        val pos = LatLng(loc.latitude, loc.longitude)
+        if (marker == null) {
+            marker = map.addMarker(
+                MarkerOptions()
+                    .position(pos)
+                    .title("Posisi AYA GPS")
+                    .snippet("±%.0f m • %s".format(loc.accuracy, loc.provider))
+                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE))
+            )
+            map.moveCamera(CameraUpdateFactory.newLatLngZoom(pos, 17f))
+        } else {
+            marker?.position = pos
+            marker?.snippet = "±%.0f m • %s".format(loc.accuracy, loc.provider)
+            map.moveCamera(CameraUpdateFactory.newLatLng(pos))
+        }
     }
 
     private fun observeLocation() {
@@ -102,7 +153,6 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        // Indikator warna sesuai latensi
         val color = when {
             lat < 30 -> 0xFF2E7D32.toInt()    // hijau  : stabil
             lat <= 100 -> 0xFFF9A825.toInt()  // kuning : sedang
@@ -117,9 +167,7 @@ class MainActivity : ComponentActivity() {
         )
 
         val s = SpannableString("●  $prefix$value$suffix")
-        // Titik indikator berwarna
         s.setSpan(ForegroundColorSpan(color), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-        // Angka ping berwarna + tebal
         val vStart = 3 + prefix.length
         s.setSpan(ForegroundColorSpan(color), vStart, vStart + value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         s.setSpan(StyleSpan(Typeface.BOLD), vStart, vStart + value.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -143,6 +191,7 @@ class MainActivity : ComponentActivity() {
                 loc.latitude, loc.longitude, loc.accuracy, loc.provider,
                 loc.speed, LocationStore.satellites.value, time
             )
+            updateMap(loc)
         }
     }
 
@@ -177,6 +226,20 @@ class MainActivity : ComponentActivity() {
             setPadding(0, 0, 0, dp(12))
         }
         netText.text = dotText("Menunggu data jaringan…", 0xFF78909C.toInt())
+
+        val mapCaption = TextView(this).apply {
+            text = "🗺️ Peta posisi (real-time)"
+            textSize = 13f
+            setTextColor(0xFF78909C.toInt())
+            setPadding(0, dp(4), 0, dp(2))
+        }
+        mapView = MapView(this).apply {
+            // Agar gestur peta tidak "berebut" dengan scroll layar
+            setOnTouchListener { v, _ ->
+                v.parent.requestDisallowInterceptTouchEvent(true)
+                false
+            }
+        }
 
         btnStart = makeButton("▶  Mulai GPS (Mode Agresif)") { startGps() }
         btnStop = makeButton("⏹  Berhenti") { stopGps() }
@@ -227,6 +290,12 @@ class MainActivity : ComponentActivity() {
         add(statusText, 0)
         add(dataText, 0)
         add(netText, 0)
+        add(mapCaption)
+        column.addView(
+            mapView, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(300)
+            )
+        )
         add(btnStart, dp(16))
         add(btnStop)
         add(btnTips)
@@ -320,10 +389,11 @@ class MainActivity : ComponentActivity() {
                 "5. Pasang SIM aktif: jaringan seluler adalah sumber lokasi utama di dalam ruangan.\n\n" +
                 "6. Biarkan AYA GPS menyala — chip yang \"hangat\" dapat fix ulang dalam hitungan detik.\n\n" +
                 "7. Xiaomi/Oppo/Vivo: izinkan Autostart + hemat baterai \"No restrictions\" untuk aplikasi ini.\n\n" +
-                "8. Aktifkan saklar \"Mulai otomatis\" di bawah agar GPS langsung dijaga setiap HP menyala.\n\n" +
+                "8. Aktifkan saklar \"Mulai otomatis\" agar GPS langsung dijaga setiap HP menyala.\n\n" +
                 "9. Jangan \"Force Stop\" aplikasi — auto start tidak akan jalan sampai aplikasi dibuka lagi.\n\n" +
                 "10. Network Keeper menyala otomatis bersama GPS: ping kecil tiap 4 detik menjaga koneksi data tidak idle.\n\n" +
-                "Panduan warna ping: ● hijau < 30 ms (stabil), ● kuning 30–100 ms (sedang), ● merah > 100 ms (jelek). Loss > 20% = sinyal sering putus."
+                "Panduan warna ping: ● hijau < 30 ms (stabil), ● kuning 30–100 ms (sedang), ● merah > 100 ms (jelek). Loss > 20% = sinyal sering putus.\n\n" +
+                "11. Peta butuh internet. Jika peta abu-abu kosong, periksa MAPS_API_KEY di Google Cloud Console."
             )
             .setPositiveButton("Mengerti", null)
             .show()
