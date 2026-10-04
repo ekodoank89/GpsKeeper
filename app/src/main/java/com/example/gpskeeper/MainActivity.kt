@@ -124,7 +124,7 @@ class MainActivity : ComponentActivity() {
                 view, LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = topMargin })
+                ).apply { this.topMargin = topMargin })
         }
 
         column.addView(title)
@@ -142,7 +142,7 @@ class MainActivity : ComponentActivity() {
     private fun makeButton(label: String, onClick: () -> Unit): Button =
         Button(this).apply {
             text = label
-            allCaps = false
+            setAllCaps(false)
             setOnClickListener { onClick() }
         }
 
