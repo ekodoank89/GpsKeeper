@@ -17,6 +17,7 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var btnBackground: Button
     private lateinit var btnBattery: Button
     private lateinit var btnTips: Button
+    private lateinit var switchAuto: Switch
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -132,6 +134,31 @@ class MainActivity : ComponentActivity() {
         btnBackground = makeButton("🔓  Aktifkan lokasi \"All the time\"") { openAppSettings() }
         btnBattery = makeButton("🔋  Pengecualian baterai") { requestIgnoreBattery() }
 
+        switchAuto = Switch(this).apply {
+            text = "🚀 Mulai otomatis saat HP nyala / restart"
+            textSize = 15f
+            isChecked = getSharedPreferences(BootReceiver.PREFS, Context.MODE_PRIVATE)
+                .getBoolean(BootReceiver.KEY_AUTO_START, false)
+            setOnCheckedChangeListener { _, checked ->
+                getSharedPreferences(BootReceiver.PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(BootReceiver.KEY_AUTO_START, checked)
+                    .apply()
+                if (checked) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Auto start AKTIF ✅ Agar pasti berjalan: izinkan lokasi \"All the time\", pengecualian baterai, dan \"Autostart\" (Xiaomi/Oppo/Vivo).",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+        val autoCaption = TextView(this).apply {
+            text = "Setiap kali HP dinyalakan ulang, AYA GPS langsung menjaga GPS tanpa perlu dibuka."
+            textSize = 12f
+            setTextColor(0xFF78909C.toInt())
+        }
+
         val column = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
@@ -154,6 +181,8 @@ class MainActivity : ComponentActivity() {
         add(btnTips)
         add(btnBackground, dp(24))
         add(btnBattery)
+        add(switchAuto, dp(24))
+        add(autoCaption, 0)
 
         return ScrollView(this).apply { addView(column) }
     }
@@ -239,7 +268,9 @@ class MainActivity : ComponentActivity() {
                 "4. Bawah pohon / gang / gedung tinggi: langit menyempit & sinyal memantul — akurasi ±20–50 m itu normal.\n\n" +
                 "5. Pasang SIM aktif: jaringan seluler adalah sumber lokasi utama di dalam ruangan.\n\n" +
                 "6. Biarkan AYA GPS menyala — chip yang \"hangat\" dapat fix ulang dalam hitungan detik.\n\n" +
-                "7. Xiaomi/Oppo/Vivo: izinkan Autostart + hemat baterai \"No restrictions\" untuk aplikasi ini."
+                "7. Xiaomi/Oppo/Vivo: izinkan Autostart + hemat baterai \"No restrictions\" untuk aplikasi ini.\n\n" +
+                "8. Aktifkan saklar \"Mulai otomatis\" di bawah agar GPS langsung dijaga setiap HP menyala.\n\n" +
+                "9. Jangan \"Force Stop\" aplikasi — auto start tidak akan jalan sampai aplikasi dibuka lagi."
             )
             .setPositiveButton("Mengerti", null)
             .show()
