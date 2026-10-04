@@ -110,7 +110,7 @@ class LocationService : Service() {
                 delay(5_000)
                 val loc = LocationStore.location.value
                 val ageMs = loc?.let {
-                    (SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos()) / 1_000_000
+                    (SystemClock.elapsedRealtimeNanos() - it.elapsedRealtimeNanos) / 1_000_000
                 } ?: Long.MAX_VALUE
                 if (ageMs > 15_000) {
                     val now = SystemClock.elapsedRealtime()
