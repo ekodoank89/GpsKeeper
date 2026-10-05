@@ -159,7 +159,11 @@ class MainActivity : ComponentActivity() {
             else -> 0xFFC62828.toInt()        // merah  : jelek
         }
 
-        val prefix = String.format(Locale.US, "Jaringan (%s): ", LocationStore.netMode.value)
+        val prefix = String.format(
+            Locale.US, "Jaringan (%s → %s): ",
+            LocationStore.netMode.value,
+            LocationStore.netHost.value.ifEmpty { "…" }
+        )
         val value = String.format(Locale.US, "%d ms", lat)
         val suffix = String.format(
             Locale.US, "  •  jitter %.1f ms  •  loss %d%%",
